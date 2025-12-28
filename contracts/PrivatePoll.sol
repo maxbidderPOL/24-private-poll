@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.24;
+
+import {FHE, euint32, externalEuint32} from "@fhevm/solidity/lib/FHE.sol";
+import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 
 /**
  * Private Poll Contract
- * 
- * Allows users to create polls where participants can submit encrypted responses.
- * Poll owners can request statistics (average, count) without revealing 
- * individual participant responses.
+ * Allows users to create polls with encrypted responses
  */
-contract PrivatePoll {
+contract PrivatePoll is ZamaEthereumConfig {
     
     struct Poll {
         address creator;
@@ -23,7 +23,7 @@ contract PrivatePoll {
     
     struct EncryptedResponse {
         address respondent;
-        bytes32 encryptedValue;
+        euint32 encryptedValue;
         uint256 submittedAt;
     }
     
@@ -46,8 +46,7 @@ contract PrivatePoll {
     
     event ResponseSubmitted(
         uint256 indexed pollId,
-        address indexed respondent,
-        bytes32 encryptedValue
+        address indexed respondent
     );
     
     event PollClosed(
@@ -87,19 +86,22 @@ contract PrivatePoll {
     
     function submitResponse(
         uint256 _pollId,
-        bytes32 _encryptedValue,
-        bytes calldata _attestation
+        externalEuint32 encryptedValue,
+        bytes calldata inputProof
     ) external {
         Poll storage poll = polls[_pollId];
         require(poll.creator != address(0), "Poll does not exist");
         require(poll.isActive, "Poll is not active");
         require(block.timestamp <= poll.endTime, "Poll has ended");
         require(!hasResponded[_pollId][msg.sender], "You have already responded to this poll");
-        require(_encryptedValue != bytes32(0), "Encrypted value cannot be empty");
+        
+        euint32 value = FHE.fromExternal(encryptedValue, inputProof);
+        FHE.allow(value, msg.sender);
+        FHE.allow(value, poll.creator);
         
         pollResponses[_pollId].push(EncryptedResponse({
             respondent: msg.sender,
-            encryptedValue: _encryptedValue,
+            encryptedValue: value,
             submittedAt: block.timestamp
         }));
         
@@ -117,7 +119,7 @@ contract PrivatePoll {
             userResponses[msg.sender].push(_pollId);
         }
         
-        emit ResponseSubmitted(_pollId, msg.sender, _encryptedValue);
+        emit ResponseSubmitted(_pollId, msg.sender);
     }
     
     function closePoll(uint256 _pollId) external {
